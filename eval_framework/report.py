@@ -5,6 +5,7 @@ from pathlib import Path
 from statistics import mean, pstdev
 from typing import Any
 
+from eval_framework.pricing import effective_cost_usd
 from eval_framework.schema import CaseRunSummary
 
 
@@ -17,7 +18,7 @@ def build_suite_summary(
     attempts = [attempt for case in cases for attempt in case.attempts]
     passed_attempts = [attempt for attempt in attempts if attempt.passed]
     wall_times = [attempt.trace.get("wall_time_ms", 0) for attempt in attempts]
-    costs = [attempt.trace.get("cost_usd", 0.0) for attempt in attempts]
+    costs = [effective_cost_usd(attempt.trace) for attempt in attempts]
     tool_counts = [
         sum(len(message.get("tool_calls", [])) for message in attempt.trace.get("messages", []) if message.get("role") == "assistant")
         for attempt in attempts
@@ -28,7 +29,7 @@ def build_suite_summary(
         pass_count = sum(1 for attempt in case.attempts if attempt.passed)
         rate = pass_count / len(case.attempts) if case.attempts else 0.0
         per_case_wall_times = [attempt.trace.get("wall_time_ms", 0) for attempt in case.attempts]
-        per_case_costs = [attempt.trace.get("cost_usd", 0.0) for attempt in case.attempts]
+        per_case_costs = [effective_cost_usd(attempt.trace) for attempt in case.attempts]
         per_case_tool_counts = [
             sum(
                 len(message.get("tool_calls", []))
@@ -50,7 +51,9 @@ def build_suite_summary(
                 "latency_stddev_ms": round(pstdev(per_case_wall_times), 2) if len(per_case_wall_times) > 1 else 0.0,
                 "cost_stddev_usd": round(pstdev(per_case_costs), 6) if len(per_case_costs) > 1 else 0.0,
                 "tool_calls_stddev": round(pstdev(per_case_tool_counts), 2) if len(per_case_tool_counts) > 1 else 0.0,
-                "attempt_results": [attempt.to_dict() for attempt in case.attempts],
+                "attempt_results": [
+                    attempt.to_dict(include_trace=True) for attempt in case.attempts
+                ],
             }
         )
 

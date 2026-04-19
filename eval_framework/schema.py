@@ -99,14 +99,17 @@ class AttemptResult:
         concrete = [m for m in self.metric_results if m.passed is not None]
         return bool(concrete) and all(m.passed for m in concrete)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
+    def to_dict(self, *, include_trace: bool = False) -> dict[str, Any]:
+        payload = {
             "case_id": self.case_id,
             "attempt_index": self.attempt_index,
             "trace_path": self.trace_path,
             "passed": self.passed,
             "metric_results": [m.to_dict() for m in self.metric_results],
         }
+        if include_trace:
+            payload["trace"] = self.trace
+        return payload
 
 
 @dataclass

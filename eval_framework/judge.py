@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import asdict
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+
+from eval_framework.rate_limit import RequestRateLimiter
 
 
 @dataclass
@@ -19,10 +21,7 @@ class JudgeVerdict:
 
 
 class JudgeClient:
-    """Pluggable LLM-as-judge adapter.
-
-    Supports Anthropic directly and OpenAI-compatible chat-completions APIs.
-    """
+    """Pluggable LLM-as-judge adapter with pacing and transient retries."""
 
     def __init__(
         self,
@@ -31,14 +30,27 @@ class JudgeClient:
         provider: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
+        requests_per_minute: float | None = None,
+        max_retries: int = 2,
+        retry_backoff_seconds: float = 2.0,
     ):
         self.enabled = enabled
-        self.model = model or os.getenv("JUDGE_MODEL")
-        self.provider = (provider or os.getenv("JUDGE_PROVIDER") or "anthropic").lower()
-        self.api_key = api_key or os.getenv("JUDGE_API_KEY")
+        self.model = model or _env_first("JUDGE_MODEL")
+        self.provider = (
+            provider
+            or _env_first("JUDGE_PROVIDER")
+            or "anthropic"
+        ).lower()
+        self.api_key = api_key or _env_first("JUDGE_API_KEY")
         if not self.api_key and self.provider == "anthropic":
             self.api_key = os.getenv("ANTHROPIC_API_KEY")
-        self.base_url = base_url or os.getenv("JUDGE_BASE_URL")
+        self.base_url = base_url or _env_first("JUDGE_BASE_URL")
+        if requests_per_minute is None:
+            raw_rpm = _env_first("JUDGE_REQUESTS_PER_MINUTE")
+            requests_per_minute = float(raw_rpm) if raw_rpm else None
+        self._rate_limiter = RequestRateLimiter(requests_per_minute)
+        self.max_retries = max_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
 
     def evaluate(
         self,
@@ -81,30 +93,53 @@ class JudgeClient:
             trace=trace,
             params=params or {},
         )
-        try:
-            raw = self._call_model(prompt)
-            verdict = self._parse_verdict(raw)
-            verdict.details.update(
-                {
-                    "metric_name": metric_name,
-                    "rubric": rubric,
-                    "judge_provider": self.provider,
-                    "judge_model": self.model,
-                }
-            )
-            return verdict
-        except Exception as exc:
-            return JudgeVerdict(
-                passed=None,
-                score=None,
-                rationale=f"Judge invocation failed: {type(exc).__name__}: {exc}",
-                details={
-                    "metric_name": metric_name,
-                    "rubric": rubric,
-                    "judge_provider": self.provider,
-                    "judge_model": self.model,
-                },
-            )
+        attempts = self.max_retries + 1
+        retry_reasons: list[str] = []
+        for attempt_index in range(1, attempts + 1):
+            try:
+                self._rate_limiter.wait_turn()
+                raw = self._call_model(prompt)
+                verdict = self._parse_verdict(raw)
+                verdict.details.update(
+                    {
+                        "metric_name": metric_name,
+                        "rubric": rubric,
+                        "judge_provider": self.provider,
+                        "judge_model": self.model,
+                        "judge_attempt_number": attempt_index,
+                        "judge_total_attempts": attempts,
+                        "judge_retry_reasons": retry_reasons[:],
+                    }
+                )
+                return verdict
+            except Exception as exc:
+                error_text = f"{type(exc).__name__}: {exc}"
+                if attempt_index >= attempts or not self._is_transient_error(error_text):
+                    return JudgeVerdict(
+                        passed=None,
+                        score=None,
+                        rationale=f"Judge invocation failed: {error_text}",
+                        details={
+                            "metric_name": metric_name,
+                            "rubric": rubric,
+                            "judge_provider": self.provider,
+                            "judge_model": self.model,
+                            "judge_attempt_number": attempt_index,
+                            "judge_total_attempts": attempts,
+                            "judge_retry_reasons": retry_reasons + [error_text],
+                        },
+                    )
+                retry_reasons.append(error_text)
+                cooldown = max(self.retry_backoff_seconds, 0.0) * attempt_index
+                self._rate_limiter.observe_rate_limit(cooldown)
+                time.sleep(cooldown)
+
+        return JudgeVerdict(
+            passed=None,
+            score=None,
+            rationale="Judge invocation failed: retry loop exhausted unexpectedly.",
+            details={"metric_name": metric_name, "rubric": rubric},
+        )
 
     def _build_prompt(
         self,
@@ -211,3 +246,35 @@ class JudgeClient:
             rationale=str(payload.get("rationale", "")),
             details={"evidence": payload.get("evidence", []), "raw_verdict": payload},
         )
+
+    @staticmethod
+    def _is_transient_error(error_text: str) -> bool:
+        lowered = error_text.lower()
+        transient_markers = (
+            "429",
+            "500",
+            "502",
+            "503",
+            "504",
+            "rate limit",
+            "timeout",
+            "timed out",
+            "connection reset",
+            "connection aborted",
+            "connection refused",
+            "temporary failure",
+            "temporarily unavailable",
+            "service unavailable",
+            "overloaded",
+            "network",
+            "http 429",
+        )
+        return any(marker in lowered for marker in transient_markers)
+
+
+def _env_first(*names: str) -> str | None:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return None

@@ -7,6 +7,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from eval_framework.rate_limit import RequestRateLimiter
+
 
 class AgentRunner:
     """Thin wrapper around the shipped agent.
@@ -15,11 +17,17 @@ class AgentRunner:
     as error traces rather than crashing the whole suite.
     """
 
-    def __init__(self, project_root: str | Path):
+    def __init__(
+        self,
+        project_root: str | Path,
+        *,
+        requests_per_minute: float | None = None,
+    ):
         self.project_root = Path(project_root)
         self._import_lock = Lock()
         self._run_agent = None
         self._import_error: Exception | None = None
+        self._rate_limiter = RequestRateLimiter(requests_per_minute)
 
     def run(
         self,
@@ -41,11 +49,15 @@ class AgentRunner:
             if not is_transient or attempt_number >= total_attempts:
                 return trace
             retry_reasons.append(error_text)
+            self._rate_limiter.observe_rate_limit(
+                max(retry_backoff_seconds, 0.0) * attempt_number
+            )
             time.sleep(max(retry_backoff_seconds, 0.0) * attempt_number)
         return self._run_once(question, model=model)
 
     def _run_once(self, question: str, model: str | None = None) -> dict[str, Any]:
         try:
+            self._rate_limiter.wait_turn()
             run_agent = self._load_run_agent()
             result = run_agent(question, model=model) if model else run_agent(question)
             if hasattr(result, "to_dict"):
