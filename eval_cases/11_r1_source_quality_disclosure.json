@@ -1,0 +1,22 @@
+{
+  "id": "r1_source_quality_disclosure",
+  "input": "What is the maximum payload of the Acme R1 arm? If sources disagree, tell me which source is official.",
+  "description": "Checks whether the agent handles disagreement between official specs and community FAQ.",
+  "tags": ["source_quality", "acme"],
+  "hard_assertions": [
+    {"type": "tool_called", "params": {"tool": "web_search"}},
+    {"type": "tool_called", "params": {"tool": "fetch_url"}},
+    {"type": "citations_are_fetched", "params": {}}
+  ],
+  "soft_assertions": [
+    {
+      "metric": "correctness",
+      "rubric": "Pass only if the answer identifies the official datasheet value as 5 kg or 11 lb equivalent, and clearly labels the FAQ as unofficial if it mentions it."
+    },
+    {
+      "metric": "groundedness",
+      "rubric": "Pass only if disagreement is disclosed faithfully and source quality is explained rather than flattened into one unsupported number."
+    }
+  ]
+}
+

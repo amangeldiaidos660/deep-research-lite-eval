@@ -1,0 +1,21 @@
+{
+  "id": "format_and_finish_compliance",
+  "input": "Answer in under 60 words: when did NASA confirm Voyager 1 entered interstellar space?",
+  "description": "Checks concise completion and finish behavior on a simple query.",
+  "tags": ["format", "finish", "space"],
+  "hard_assertions": [
+    {"type": "stopped_reason_is", "params": {"value": "finish"}},
+    {"type": "tool_sequence_contains", "params": {"value": ["web_search", "fetch_url", "finish"]}},
+    {"type": "citations_are_fetched", "params": {}}
+  ],
+  "soft_assertions": [
+    {
+      "metric": "correctness",
+      "rubric": "Pass only if the answer says NASA confirmed the crossing in September 2013 and does not confuse confirmation date with the actual crossing date."
+    },
+    {
+      "metric": "tool_use",
+      "rubric": "Pass only if the agent still follows the intended workflow and terminates cleanly with finish for this short query."
+    }
+  ]
+}

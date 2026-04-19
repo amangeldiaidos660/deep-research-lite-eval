@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from eval_framework.agent_runner import AgentRunner
 from eval_framework.case_loader import load_cases
@@ -14,6 +18,7 @@ from eval_framework.viewer import render_viewer
 
 
 def main() -> int:
+    load_dotenv()
     parser = argparse.ArgumentParser(description="Deep Research Lite eval harness")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -21,13 +26,20 @@ def main() -> int:
     run_cmd.add_argument("--cases", default="eval_cases")
     run_cmd.add_argument("--output", default="eval_runs")
     run_cmd.add_argument("--repeats", type=int, default=1)
+    run_cmd.add_argument("--concurrency", type=int, default=1)
+    run_cmd.add_argument("--max-retries", type=int, default=2)
+    run_cmd.add_argument("--retry-backoff-seconds", type=float, default=1.0)
     run_cmd.add_argument("--model", default=None)
     run_cmd.add_argument("--judge-model", default=None)
+    run_cmd.add_argument("--judge-provider", default=None)
+    run_cmd.add_argument("--judge-base-url", default=None)
     run_cmd.add_argument("--enable-judge", action="store_true")
 
     rescore_cmd = sub.add_parser("rescore", help="Re-score a saved run without calling the agent")
     rescore_cmd.add_argument("--summary", required=True)
     rescore_cmd.add_argument("--judge-model", default=None)
+    rescore_cmd.add_argument("--judge-provider", default=None)
+    rescore_cmd.add_argument("--judge-base-url", default=None)
     rescore_cmd.add_argument("--enable-judge", action="store_true")
 
     diff_cmd = sub.add_parser("diff", help="Diff two summary files")
@@ -49,30 +61,47 @@ def run_suite(args: argparse.Namespace) -> int:
     run_dir = new_run_dir(args.output)
     runner = AgentRunner(Path.cwd())
     registry = build_registry()
-    judge = JudgeClient(enabled=args.enable_judge, model=args.judge_model)
+    judge = JudgeClient(
+        enabled=args.enable_judge,
+        model=args.judge_model,
+        provider=args.judge_provider,
+        base_url=args.judge_base_url,
+    )
+    attempts_by_case: dict[str, list[AttemptResult]] = defaultdict(list)
+    case_by_id = {case.id: case for case in cases}
+
+    work_items = [
+        (case, attempt_index)
+        for case in cases
+        for attempt_index in range(1, args.repeats + 1)
+    ]
+    max_workers = max(1, min(args.concurrency, len(work_items) or 1))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _run_attempt,
+                case=case,
+                attempt_index=attempt_index,
+                run_dir=run_dir,
+                runner=runner,
+                registry=registry,
+                judge=judge,
+                model=args.model,
+                max_retries=args.max_retries,
+                retry_backoff_seconds=args.retry_backoff_seconds,
+            ): (case.id, attempt_index)
+            for case, attempt_index in work_items
+        }
+        for future in as_completed(futures):
+            attempt = future.result()
+            attempts_by_case[attempt.case_id].append(attempt)
+
     case_summaries: list[CaseRunSummary] = []
-
     for case in cases:
-        attempts: list[AttemptResult] = []
-        for attempt_index in range(1, args.repeats + 1):
-            trace = runner.run(case.input, model=args.model)
-            trace_path = run_dir / "traces" / f"{case.id}__attempt_{attempt_index}.json"
-            write_json(trace_path, trace)
-
-            metric_results = []
-            metric_results.append(registry.get("hard_assertions").evaluate(case=case, trace=trace, judge=judge))
-            for metric_name in ("correctness", "groundedness", "tool_use", "safety", "efficiency"):
-                metric_results.append(registry.get(metric_name).evaluate(case=case, trace=trace, judge=judge))
-
-            attempts.append(
-                AttemptResult(
-                    case_id=case.id,
-                    attempt_index=attempt_index,
-                    trace_path=str(trace_path),
-                    trace=trace,
-                    metric_results=metric_results,
-                )
-            )
+        attempts = sorted(
+            attempts_by_case.get(case.id, []),
+            key=lambda item: item.attempt_index,
+        )
         case_summaries.append(
             CaseRunSummary(
                 case_id=case.id,
@@ -96,7 +125,12 @@ def run_suite(args: argparse.Namespace) -> int:
 def rescore_suite(args: argparse.Namespace) -> int:
     summary_path = Path(args.summary)
     summary = read_json(summary_path)
-    judge = JudgeClient(enabled=args.enable_judge, model=args.judge_model)
+    judge = JudgeClient(
+        enabled=args.enable_judge,
+        model=args.judge_model,
+        provider=args.judge_provider,
+        base_url=args.judge_base_url,
+    )
     registry = build_registry()
 
     refreshed_cases = []
@@ -147,6 +181,44 @@ def diff_summaries(args: argparse.Namespace) -> int:
     diff = build_diff(current, previous)
     print(diff)
     return 0
+
+
+def _run_attempt(
+    *,
+    case,
+    attempt_index: int,
+    run_dir: Path,
+    runner: AgentRunner,
+    registry,
+    judge: JudgeClient,
+    model: str | None,
+    max_retries: int,
+    retry_backoff_seconds: float,
+) -> AttemptResult:
+    trace = runner.run(
+        case.input,
+        model=model,
+        max_retries=max_retries,
+        retry_backoff_seconds=retry_backoff_seconds,
+    )
+    trace_path = run_dir / "traces" / f"{case.id}__attempt_{attempt_index}.json"
+    write_json(trace_path, trace)
+
+    metric_results = [
+        registry.get("hard_assertions").evaluate(case=case, trace=trace, judge=judge)
+    ]
+    for metric_name in ("correctness", "groundedness", "tool_use", "safety", "efficiency"):
+        metric_results.append(
+            registry.get(metric_name).evaluate(case=case, trace=trace, judge=judge)
+        )
+
+    return AttemptResult(
+        case_id=case.id,
+        attempt_index=attempt_index,
+        trace_path=str(trace_path),
+        trace=trace,
+        metric_results=metric_results,
+    )
 
 
 def _case_stub_from_case_payload(case_payload: dict, trace: dict):

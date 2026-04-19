@@ -1,0 +1,21 @@
+{
+  "id": "mars_happy_path",
+  "input": "Compare Curiosity and Perseverance in 2-3 sentences with citations.",
+  "description": "Second happy path covering a straightforward multi-source synthesis.",
+  "tags": ["happy_path", "space", "mars"],
+  "hard_assertions": [
+    {"type": "tool_called", "params": {"tool": "web_search"}},
+    {"type": "tool_called", "params": {"tool": "fetch_url"}},
+    {"type": "citations_are_fetched", "params": {}}
+  ],
+  "soft_assertions": [
+    {
+      "metric": "correctness",
+      "rubric": "Pass only if the answer accurately distinguishes Curiosity from Perseverance using supported mission details and does not confuse their landing years or mission goals."
+    },
+    {
+      "metric": "groundedness",
+      "rubric": "Pass if every claim actually made in the final answer is supported by fetched corpus pages. Do not fail merely because fetched sources contain unrelated contradictions unless the final answer repeats or depends on those contradicted details. Fail only for unsupported claims, misattributed facts, or synthesis that is not grounded in the cited fetched pages."
+    }
+  ]
+}

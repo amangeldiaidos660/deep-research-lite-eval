@@ -15,7 +15,6 @@ class ToolUseMetric:
         trace: dict,
         judge: JudgeClient,
     ) -> MetricResult:
-        del case, judge
         calls = tool_calls(trace)
         names = [call.get("name", "") for call in calls]
         if str(trace.get("stopped_reason")) == "error":
@@ -54,6 +53,23 @@ class ToolUseMetric:
                 bad_args.append(f"{call.get('name')}: non-object args")
         if bad_args:
             failures.append("invalid tool arguments observed")
+
+        soft = next((item for item in case.soft_assertions if item.metric == self.name), None)
+        if not failures and soft is not None:
+            verdict = judge.evaluate(
+                metric_name=self.name,
+                rubric=soft.rubric,
+                case_input=case.input,
+                trace=trace,
+                params=soft.params,
+            )
+            return MetricResult(
+                name=self.name,
+                passed=verdict.passed,
+                score=verdict.score,
+                reason=verdict.rationale,
+                details={**verdict.details, "tool_names": names, "bad_args": bad_args},
+            )
 
         return MetricResult(
             name=self.name,

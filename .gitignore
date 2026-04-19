@@ -9,5 +9,4 @@ __pycache__/
 .mypy_cache/
 
 eval_runs/
-eval_runs_smoke/
-eval_runs_smoke2/
+eval_runs*/
