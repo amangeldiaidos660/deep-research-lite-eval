@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+import math
+from pathlib import Path
+from statistics import mean
+from typing import Any
+
+from eval_framework.schema import CaseRunSummary
+
+
+def build_suite_summary(
+    *,
+    cases: list[CaseRunSummary],
+    repeats: int,
+    reliability_k: int = 3,
+) -> dict[str, Any]:
+    attempts = [attempt for case in cases for attempt in case.attempts]
+    passed_attempts = [attempt for attempt in attempts if attempt.passed]
+    wall_times = [attempt.trace.get("wall_time_ms", 0) for attempt in attempts]
+    costs = [attempt.trace.get("cost_usd", 0.0) for attempt in attempts]
+    tool_counts = [
+        sum(len(message.get("tool_calls", [])) for message in attempt.trace.get("messages", []) if message.get("role") == "assistant")
+        for attempt in attempts
+    ]
+
+    case_summaries = []
+    for case in cases:
+        pass_count = sum(1 for attempt in case.attempts if attempt.passed)
+        rate = pass_count / len(case.attempts) if case.attempts else 0.0
+        case_summaries.append(
+            {
+                "case_id": case.case_id,
+                "description": case.description,
+                "tags": case.tags,
+                "spec": case.spec,
+                "pass_count": pass_count,
+                "attempts": len(case.attempts),
+                "pass_rate": round(rate, 4),
+                "pass_pow_k": round(rate**reliability_k, 4),
+                "attempt_results": [attempt.to_dict() for attempt in case.attempts],
+            }
+        )
+
+    return {
+        "repeats": repeats,
+        "reliability_k": reliability_k,
+        "aggregate": {
+            "case_count": len(cases),
+            "attempt_count": len(attempts),
+            "attempt_pass_rate": round(len(passed_attempts) / len(attempts), 4) if attempts else 0.0,
+            "total_cost_usd": round(sum(costs), 6),
+            "mean_tool_calls_per_attempt": round(mean(tool_counts), 2) if tool_counts else 0.0,
+            "p50_latency_ms": _percentile(wall_times, 50),
+            "p95_latency_ms": _percentile(wall_times, 95),
+        },
+        "cases": case_summaries,
+    }
+
+
+def render_markdown(summary: dict[str, Any], output_path: str | Path) -> None:
+    lines = [
+        "# Evaluation Run Summary",
+        "",
+        f"- Cases: {summary['aggregate']['case_count']}",
+        f"- Attempts: {summary['aggregate']['attempt_count']}",
+        f"- Attempt pass rate: {summary['aggregate']['attempt_pass_rate']}",
+        f"- Total cost (USD): {summary['aggregate']['total_cost_usd']}",
+        f"- p50 latency (ms): {summary['aggregate']['p50_latency_ms']}",
+        f"- p95 latency (ms): {summary['aggregate']['p95_latency_ms']}",
+        f"- Mean tool calls / attempt: {summary['aggregate']['mean_tool_calls_per_attempt']}",
+        "",
+        "## Per Case",
+        "",
+    ]
+    for case in summary["cases"]:
+        lines.append(
+            f"- `{case['case_id']}`: {case['pass_count']}/{case['attempts']} passed "
+            f"(pass rate={case['pass_rate']}, pass^{summary['reliability_k']}={case['pass_pow_k']})"
+        )
+    Path(output_path).write_text("\n".join(lines), encoding="utf-8")
+
+
+def build_diff(current: dict[str, Any], previous: dict[str, Any]) -> dict[str, Any]:
+    previous_cases = {item["case_id"]: item for item in previous.get("cases", [])}
+    regressions: list[dict[str, Any]] = []
+    improvements: list[dict[str, Any]] = []
+
+    for item in current.get("cases", []):
+        prior = previous_cases.get(item["case_id"])
+        if prior is None:
+            continue
+        delta = item["pass_rate"] - prior.get("pass_rate", 0.0)
+        payload = {
+            "case_id": item["case_id"],
+            "current_pass_rate": item["pass_rate"],
+            "previous_pass_rate": prior.get("pass_rate", 0.0),
+            "delta": round(delta, 4),
+        }
+        if delta < 0:
+            regressions.append(payload)
+        elif delta > 0:
+            improvements.append(payload)
+
+    return {
+        "regressions": regressions,
+        "improvements": improvements,
+    }
+
+
+def _percentile(values: list[float], pct: int) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(float(v) for v in values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (pct / 100) * (len(ordered) - 1)
+    lower = math.floor(rank)
+    upper = math.ceil(rank)
+    if lower == upper:
+        return round(ordered[lower], 2)
+    weight = rank - lower
+    return round(ordered[lower] * (1 - weight) + ordered[upper] * weight, 2)

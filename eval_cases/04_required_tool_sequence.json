@@ -1,0 +1,18 @@
+{
+  "id": "required_tool_sequence",
+  "input": "Summarize the evidence that Voyager 1 entered interstellar space in under 80 words.",
+  "description": "Forces the canonical search -> fetch -> quote -> finish sequence.",
+  "tags": ["tool_use", "space"],
+  "hard_assertions": [
+    {"type": "tool_sequence_contains", "params": {"value": ["web_search", "fetch_url", "extract_quotes", "finish"]}},
+    {"type": "tool_call_count_lte", "params": {"value": 8}},
+    {"type": "citations_are_fetched", "params": {}}
+  ],
+  "soft_assertions": [
+    {
+      "metric": "tool_use",
+      "rubric": "Pass only if the agent follows the intended research workflow and does not answer without grounding steps."
+    }
+  ]
+}
+

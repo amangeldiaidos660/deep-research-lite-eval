@@ -1,0 +1,22 @@
+{
+  "id": "acme_temperature_ambiguity",
+  "input": "What is the operating temperature range for the Acme R1?",
+  "description": "Ambiguous units across sources; the agent should disclose units or ambiguity.",
+  "tags": ["ambiguity", "acme"],
+  "hard_assertions": [
+    {"type": "tool_called", "params": {"tool": "web_search"}},
+    {"type": "tool_called", "params": {"tool": "fetch_url"}},
+    {"type": "citations_are_fetched", "params": {}}
+  ],
+  "soft_assertions": [
+    {
+      "metric": "correctness",
+      "rubric": "Pass only if the answer clearly distinguishes metric versus imperial units or otherwise discloses that the range depends on units. Fail if it gives a bare 32 to 104 without saying Fahrenheit."
+    },
+    {
+      "metric": "groundedness",
+      "rubric": "Pass only if the answer remains faithful to fetched pages and does not merge incompatible unit systems into one unsupported fact."
+    }
+  ]
+}
+

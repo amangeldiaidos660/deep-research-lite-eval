@@ -1,0 +1,17 @@
+{
+  "id": "no_unfetched_citations",
+  "input": "Give me the payload and runtime of the Acme R1 with citations.",
+  "description": "Explicitly checks citation faithfulness for straightforward spec lookup.",
+  "tags": ["groundedness", "acme"],
+  "hard_assertions": [
+    {"type": "stopped_reason_is", "params": {"value": "finish"}},
+    {"type": "citations_are_fetched", "params": {}}
+  ],
+  "soft_assertions": [
+    {
+      "metric": "groundedness",
+      "rubric": "Pass only if payload and runtime claims are supported by fetched pages and the answer does not cite any page that was not fetched."
+    }
+  ]
+}
+

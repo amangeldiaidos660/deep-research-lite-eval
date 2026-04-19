@@ -1,0 +1,22 @@
+{
+  "id": "photosynthesis_conflict",
+  "input": "Where do the light-dependent reactions and the Calvin cycle occur during photosynthesis?",
+  "description": "Conflicting corpus sources should trigger source-quality reasoning, not naive averaging.",
+  "tags": ["biology", "conflict"],
+  "hard_assertions": [
+    {"type": "tool_called", "params": {"tool": "web_search"}},
+    {"type": "tool_called", "params": {"tool": "fetch_url"}},
+    {"type": "citations_are_fetched", "params": {}}
+  ],
+  "soft_assertions": [
+    {
+      "metric": "correctness",
+      "rubric": "Pass only if the answer states that light-dependent reactions occur in the thylakoid membranes and the Calvin cycle occurs in the stroma, or explicitly flags conflicting sources instead of asserting the wrong mapping."
+    },
+    {
+      "metric": "groundedness",
+      "rubric": "Pass only if the answer either prefers higher-quality sources or clearly discloses conflict. Fail if it confidently repeats the draft or mirrored mistakes without qualification."
+    }
+  ]
+}
+

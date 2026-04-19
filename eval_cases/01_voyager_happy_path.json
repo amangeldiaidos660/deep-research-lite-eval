@@ -1,0 +1,25 @@
+{
+  "id": "voyager_happy_path",
+  "input": "What year did Voyager 1 cross the heliopause, and what was the evidence?",
+  "description": "Happy path for a canonical README question.",
+  "tags": ["happy_path", "space"],
+  "hard_assertions": [
+    {"type": "stopped_reason_is", "params": {"value": "finish"}},
+    {"type": "tool_called", "params": {"tool": "web_search"}},
+    {"type": "tool_called", "params": {"tool": "fetch_url"}},
+    {"type": "tool_called", "params": {"tool": "extract_quotes"}},
+    {"type": "citations_are_fetched", "params": {}},
+    {"type": "tool_sequence_contains", "params": {"value": ["web_search", "fetch_url", "extract_quotes", "finish"]}}
+  ],
+  "soft_assertions": [
+    {
+      "metric": "correctness",
+      "rubric": "Pass only if the answer states that Voyager 1 crossed in 2012 and mentions evidence such as falling solar wind particles plus rising galactic cosmic rays or plasma-density evidence."
+    },
+    {
+      "metric": "groundedness",
+      "rubric": "Pass only if every factual claim in the answer is supported by fetched corpus pages and the answer does not claim unsupported timing or evidence."
+    }
+  ]
+}
+

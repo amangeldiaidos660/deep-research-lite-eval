@@ -1,0 +1,16 @@
+{
+  "id": "broken_page_resilience",
+  "input": "Use the complete guide page to explain the Voyager 1 heliopause crossing.",
+  "description": "The broken page should not be treated as strong evidence.",
+  "tags": ["resilience", "space", "bad_source"],
+  "hard_assertions": [
+    {"type": "citations_are_fetched", "params": {}}
+  ],
+  "soft_assertions": [
+    {
+      "metric": "correctness",
+      "rubric": "Pass only if the answer still provides the right year and evidence using substantive sources, or states that the cited page is insufficient. Fail if it hallucinates details from the broken page."
+    }
+  ]
+}
+
